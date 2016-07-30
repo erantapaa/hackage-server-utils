@@ -1,0 +1,177 @@
+#!/bin/bash
+
+### --- Configure these variables:
+
+# - top of the hackage-server source tree
+HACKAGE_SOURCE="/home/erantapaa/hackage-server"
+
+# - hackage-server executable (use bare file name for PATH lookup)
+HACKAGE_SERVER="hackage-server"
+
+# - hackage-mirror executable (use bare file name for PATH lookup)
+HACKAGE_MIRROR="hackage-mirror"
+
+# - root directory of server instance
+SERVER_DIR="/home/erantapaa/server3"
+
+# - server port
+SERVER_PORT="8300"
+
+### --- no configuration needed beyond this point ---
+
+SERVER_URL="http://localhost:$SERVER_PORT"
+ADMIN_PASS="admin"
+ADMIN_CREDS="admin:$ADMIN_PASS"
+
+check_config () {
+  have_hackage_server
+  have_hackage_mirror
+  case "$SERVER_PORT" in
+    [0-9]*) ;;
+    *) echo "SERVER_PORT is not numeric: $SERVER_PORT"; exit 1;;
+  esac
+  # check $SERVER_DIR
+  if [ -z "$SERVER_DIR" ]; then
+    echo "SERVER_DIR is not configured"
+    exit 1
+  fi
+  if [ ! -d "$SERVER_DIR" ]; then
+    echo "SERVER_DIR oes not exist: $SERVER_DIR"
+    exit 1;
+  fi
+  # check HACKAGE_SOURCE
+  if [ -z "$HACKAGE_SOURCE" ]; then
+    echo "HACKAGE_SOURCE is not configured: $HACKAGE_SOURCE"
+    exit 1
+  fi
+  if [ ! -d "$HACKAGE_SOURCE" ]; then
+    echo "HACKAGE_SOURCE is not a directory: $HACKAGE_SOURCE"
+    exit 1
+  fi
+  for subdir in datafiles datafiles/TUF datafiles/static datafiles/templates; do
+    if [ ! -d "$HACKAGE_SOURCE/$subdir" ]; then
+      echo "HACKAGE_SOURCE does not have sub-directory $subdir: $HACKAGE_SOURCE/$subdir"
+      exit 1
+    fi
+  done
+  # Warn if sendmail is missing
+  warn_have_sendmail
+  echo "All checks performed"
+}
+
+have_hackage_server () {
+  if ! type -t "$HACKAGE_SERVER" > /dev/null; then
+    echo "HACKAGE_SERVER not found: $HACKAGE_SERVER"
+    exit 1
+  fi
+}
+
+have_hackage_mirror () {
+  if ! type -t "$HACKAGE_MIRROR" > /dev/null; then
+    echo "HACKAGE_SERVER not found: $HACKAGE_SERVER"
+    exit 1
+  fi
+}
+
+warn_have_sendmail () {
+  if ! type -t "/usr/sbin/sendmail"  > /dev/null; then
+    echo "WARNING: /usr/sbin/sendmail missing or not executable"
+  fi
+}
+
+server_init () {
+  # create $SERVER_DIR
+  mkdir -p "$SERVER_DIR/datafiles"
+  cp -r "$HACKAGE_SOURCE/datafiles/." "$SERVER_DIR/datafiles"
+  have_hackage_server
+  cd "$SERVER_DIR" && "$HACKAGE_SERVER" init
+}
+
+server_start_foreground () {
+  have_hackage_server
+  cd "$SERVER_DIR" && "$HACKAGE_SERVER" run --port "$SERVER_PORT"
+}
+
+server_start () {
+  have_hackage_server
+  cd "$SERVER_DIR" && nohup "$HACKAGE_SERVER" run --port "$SERVER_PORT" > /dev/null 2>&1  &
+  echo PID: $$
+}
+
+server_pids () {
+  local pids
+  pids=$(pgrep -f "hackage-server.*$SERVER_PORT")
+  case "$pids" in
+    "") echo "No pids match 'hackage-server.*$SERVER_PORT'" ;;
+    *)  ps $pids ;;
+  esac
+}
+
+add_user () {
+  # realname, username, email, 
+  case "$#" in
+    3) ;;
+    *) echo "usage: add-user realname username email" ; exit 1 ;;
+  esac
+  set -x
+  curl -F "realname=$1" -F "username=$2" -F "email=$3" "$SERVER_URL/users/register-request"
+}
+
+add_uploader () {
+  local user="$1"
+  local reason="$2"
+  
+  curl --user "$ADMIN_CREDS" --digest -F "user=$user" -F "reason=$reason" "$SERVER_URL/packages/uploaders"
+}
+
+add_trustee () {
+  local user="$1"
+  local reason="$2"
+  
+  curl --user "$ADMIN_CREDS" --digest -F "user=$user" -F "reason=$reason" "$SERVER_URL/packages/trustees"
+}
+
+server_init_users() {
+  add_uploader admin
+  add_trustee admin
+}
+
+server_help () {
+  cat << END
+Recognized commands:
+
+  check-config             - check server config variables
+  init                     - initialize server directory
+  pid                      - show server pid
+  start                    - start server in background
+  add-user real user email - add a new user
+  add-uploader user        - add uploader
+  add-trustee  user        - add trustee
+END
+}
+
+dispatch () {
+  local cmd="$1"
+  local x
+
+  case "$cmd" in
+    '')   echo "no command given -- use help for list of commands" >&2; exit 1;;
+    help) x=server_help ;;
+    init) x=server_init ;;
+    pid) x=server_pid ;;
+    add-user)     x=add_user ;;
+    add-uploader) x=add_uploader ;;
+    add-trustee)  x=add_trustee ;;
+    start)        x=server_start ;;
+    start-foreground) x=server_start_foreground ;;
+    check-config) x=check_config ;;
+    *)            echo "unknown commmand: $cmd" >&2; exit 1;;
+  esac
+
+  shift
+  set -e
+  "$x" "$@"
+}
+
+dispatch "$@"
+

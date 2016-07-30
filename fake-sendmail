@@ -1,0 +1,12 @@
+#!/usr/bin/env perl
+
+open(MAIL, ">>/tmp/mail");
+chmod 0664, "/tmp/mail";
+print MAIL "ARG: @ARGS\n";
+print MAIL "BODY:\n";
+while (<STDIN>) {
+  print MAIL $_
+}
+print MAIL "\n"
+close MAIL;
+

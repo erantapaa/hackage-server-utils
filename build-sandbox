@@ -1,0 +1,12 @@
+#!/bin/sh
+
+set -x
+set -e
+if [ ! -e "hackage-server" ]; then
+  git clone https://github.com/haskell/hackage-server.git
+fi
+cd hackage-server
+cabal sandbox init
+cabal install --only-dependencies
+cabal install
+
